@@ -220,6 +220,11 @@ end
 function get_sketch(sketch::FastFDSketch)
     # Return the top ℓ rows (the sketch after rotation)
     # Following the reference: return self._sketch[:self.ell,:]
+
+    # Absorb any rows appended since the last rotation before returning.
+    if sketch.next_zero_row - 1 > sketch.ℓ
+        _rotate!(sketch)
+    end
     return sketch.B[1:sketch.ℓ, :]
 end
 
@@ -416,6 +421,32 @@ function projection_error_frobenius(sketch::AbstractFDSketch, A::AbstractMatrix)
     return norm(A - A_proj)^2
 end
 
+"""
+    projection_error_rank_k(sketch, A, k) -> Float64
+
+Squared Frobenius error of the rank-k restricted projection that the FD
+projection theorem actually bounds:  ‖A − A Vₖ Vₖᵀ‖²_F,
+where Vₖ holds the top-k right singular vectors of the sketch B.
+Pairs with projection_error_bound(sketch, A, k) = (ℓ/(ℓ−k))·‖A − A_k‖²_F.
+"""
+function projection_error_rank_k(sketch::AbstractFDSketch, A::AbstractMatrix, k::Int)
+    @assert 0 ≤ k < sketch.ℓ "need 0 ≤ k < ℓ"
+
+    k == 0 && return norm(A)^2          # rank-0 projection keeps nothing
+
+    B = get_sketch(sketch)
+    size(B, 1) == 0 && return norm(A)^2
+
+    F = svd(B)
+    # cap k at B's numerical rank so we never project onto noise directions
+    tol = eps(eltype(B)) * maximum(size(B)) * maximum(F.S)
+    r = count(>(tol), F.S)
+    k_eff = min(k, r)
+    k_eff == 0 && return norm(A)^2
+
+    Vk = F.V[:, 1:k_eff]                 # d × k_eff, top-k right singular vectors of B
+    return norm(A - A * Vk * Vk')^2      # ‖A − A Vₖ Vₖᵀ‖²_F
+end
 
 """
     projection_error_bound(sketch::AbstractFDSketch, A::AbstractMatrix, k::Int) -> Float64
